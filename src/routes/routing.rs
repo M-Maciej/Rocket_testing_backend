@@ -2,6 +2,8 @@ use std::path::{Path,PathBuf};
 use rocket::{fs::NamedFile, State};
 use std::sync::atomic::{AtomicUsize,Ordering};
 use super::request_local_state::*;
+use super::counter::Counter;
+use rocket::http::{Cookie, CookieJar};
 
 #[get("/")]
 pub fn index() -> &'static str{
@@ -79,18 +81,28 @@ pub fn search(query: Option<String>) -> String {
         None => "Please provide a search query.".to_string(),
     }
 }
-pub struct Counter{
-    pub count:AtomicUsize
-}
 pub struct Config{
     pub count:AtomicUsize
 }
 
+// Route that increments and displays the counter
 #[get("/count")]
-pub fn counting_route(hit_count: &State<Counter>)->String{
-    let current_count=hit_count.count.load(Ordering::Relaxed);
-    format!("Current count: {}",current_count)
+pub fn counting_route(hit_count: &State<Counter>, jar: &CookieJar<'_>) -> String {
+    // Retrieve the current counter from the cookie, or initialize it if not present
+    let current_count = jar
+        .get_private("counter")
+        .and_then(|cookie| cookie.value().parse::<usize>().ok())
+        .unwrap_or(0);
+
+    // Increment the counter both in the state and store it back in the cookie
+    let new_count = hit_count.increment();
+    hit_count.count.store(new_count, Ordering::Relaxed); 
+    jar.add_private(Cookie::new("counter", new_count.to_string()));
+
+    format!("Current count: {}", new_count)
 }
+
+
 
 #[get("/double")]
 pub fn double_guard(hit_count: &State<Counter>, config:&State<Config>)->String{
@@ -107,12 +119,12 @@ pub fn id_local_state(id: &RequestID) -> String{
 
 // Admin Dashboard Route
 #[get("/dashboard")]
-fn admin_dashboard(admin: Admin) -> String {
+pub fn admin_dashboard(admin: Admin) -> String {
     format!("Welcome to the admin dashboard, {}!", admin.user.username)
 }
 
 // User Dashboard Route (fallback if not admin)
 #[get("/dashboard", rank = 2)]
-fn user_dashboard(user: &User) -> String {
+pub fn user_dashboard(user: &User) -> String {
     format!("Welcome to the user dashboard, {}!", user.username)
 }

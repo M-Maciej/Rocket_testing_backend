@@ -3,6 +3,8 @@ use std::sync::atomic::AtomicUsize;
 use rocket::{http::Status,State};
 use rocket::outcome::IntoOutcome;
 use rocket::outcome::try_outcome;
+use rocket::http::Cookie;
+
 
 
 static ID_COUNTER:AtomicUsize= AtomicUsize::new(0);
@@ -13,11 +15,23 @@ pub struct RequestID(pub usize);
 impl<'r> FromRequest<'r> for &'r RequestID{
     type Error=();
 
-    async fn from_request(request: &'r Request<'_>) -> request::Outcome<Self,Self::Error>{
-        request::Outcome::Success(request.local_cache(||{
-           RequestID(ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)) 
+    async fn from_request(request: &'r Request<'_>) -> request::Outcome<Self, Self::Error> {
+        request::Outcome::Success(request.local_cache(|| {
+            // Try to get the RequestID from a cookie
+            let request_id = request.cookies()
+                .get_private("request_id")
+                .and_then(|cookie| cookie.value().parse().ok())
+                .unwrap_or_else(|| {
+                    // If no cookie is found, generate a new RequestID
+                    let new_id = ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    // Store the new RequestID in a cookie
+                    request.cookies().add_private(Cookie::new("request_id", new_id.to_string()));
+                    new_id
+                });
+
+            RequestID(request_id)
         }))
-    }    
+    }  
 }
 
 // Simulated Database Struct
